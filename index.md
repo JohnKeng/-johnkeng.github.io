@@ -1,37 +1,106 @@
-## Welcome to GitHub Pages
+### 渲染樹（Render Tree）的構建
 
-You can use the [editor on GitHub](https://github.com/JohnKeng/johnkeng.github.io/edit/master/index.md) to maintain and preview the content for your website in Markdown files.
+在 DOM 樹和 CSSOM 樹都渲染完成以後，就會進入渲染樹的構建⼯作。
+渲染樹就是對 DOM 樹和 CSSOM 樹的結合，得到⼀個可以知道每個節點會應⽤什麼樣式的數據結構。
+這個結合的過程⼤體上是 traversal 整個 DOM 樹，然後在 CSSOM 樹裡查詢到匹配樣式。
+但在不同瀏覽器裡這個過程不太⼀樣：
+1)在 Chrome 裡會在每個節點上使⽤ attach() ⽅法，把 CSSOM 樹的節點掛在 DOM 樹上作為渲染樹。
+2)在 Firefox 裡，會單獨構造⼀個新的結構，⽤來連接 DOM 樹和 CSSOM 樹的映射關係。
+它們內部的實現⽅式有所不同，但它們構造出來的渲染樹都有以下的特點：
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+1. 渲染樹的根是 HTML 節點。
+在 Google Web Fundamentals Document中，渲染樹的根節點是 body，但實際上 HTML 節點上的樣式也是可以顯⽰在頁⾯上的，所以我覺得渲染樹也應該是由 HTML 節點開始，但是 head 標籤裡的內容和顯⽰沒有關係，所以渲染樹中可以沒有 head 標籤的部分。
 
-### Markdown
+2. 渲染樹和 DOM 樹的結構並不完全⼀致。
+渲染樹裡會把所有不可見的元素忽略掉，所以如果是 DOM 樹中的節點有 「display: none;」 屬性的節點以及它的⼦節點，最終都不會出現在渲染樹中。但是具有 「visibility: hidden;」 樣式的元素會出現在渲染樹中，因為具有這個樣式的元素是需要佔位的，只不過不需要顯⽰出來。
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+3. 樣式優先級關係。
+同⼀個 DOM 節點可能會匹配到多個 CSSOM 節點，⽽最終的表現由哪個 CSS 規則來確定，就是樣式優先級的問題。
+當⼀個 DOM 元素受到多條樣式控制的時候，樣式的優先級順序是在有相同類型選擇器的時候有⼀套計算⽅法，給不同選擇器賦⼀個權重值。
+當考察優先級的時候，直接⽤公式計算整條選擇器的權重作為該樣式的優先級。比如：
+- inline style 的權重是 1000。
+- ID 選擇器樣式的權重是 100。
+- 類選擇器、屬性選擇器和偽類選擇器裡樣式的權重是 10。
+- 標籤選擇器裡樣式的權重是 1。
+- 通⽤選擇器直接忽略。
 
-```markdown
-Syntax highlighted code block
 
-# Header 1
-## Header 2
-### Header 3
+> Tips：
+這個計算公式的形式就是這樣，但有幾點要注意：
+1、這個計算模型僅供理解樣式優先級關係，不能代表瀏覽器裡真實的計算⽅法。
+2、權重值的計算不能越級，比如選擇器 A 只有 1 個 ID 選擇器，權重就是 100；選擇器 B ⽤了 20 個類選擇器，權重值是 200。
+這個時候如果兩個選擇器對應的樣式作⽤在同⼀個 DOM 節點上，那麼還是選擇器A會⽣效，因為它的選擇器級別更⾼。
+3、如果兩個選擇器 A 和 B 是同級別選擇器，並且最終計算的權重值也相同，那麼這兩個選擇器誰在後⾯誰優先級⾼。
 
-- Bulleted
-- List
+參考以上渲染樹的特點，由之前的 DOM 樹和 CSSOM 樹就可以構建出來⼀棵如下圖的渲染樹：
+![render-tree](https://developers.google.com/web/fundamentals/performance/critical-rendering-path/images/render-tree-construction.png?hl=zh-tw "render-tree")
+這棵渲染樹中的節點是和 DOM 樹中的節點對應的，⽽框框的css內容就是從 CSSOM 樹中查找出來的。
+從圖中可以看出來，這棵渲染樹中去掉了 head 標籤裡的內容，也不會有「display:none;」 樣式的元素。
 
-1. Numbered
-2. List
 
-**Bold** and _Italic_ and `Code` text
+> Tips:
+1、渲染樹的構建過程中，會 traversal DOM 樹中的可見節點，然後在 CSSOM 樹中查找每個節點匹配的樣式，最後通過組合這些可見節點以及和它們相匹配的樣式就可以構建出⼀棵渲染樹（帶有「visibility: hidden;」屬性的元素不可見，但會在頁⾯中佔位，所以會出現在渲染樹中）。
+這裡在查找的時候，出於效率的考慮，會從 CSSOM 樹的葉⼦節點開始查找，對應在 CSS 選擇器上也就是從選擇器的最右側向左查找。
+這就是使用後代選擇器時「.page .article p」會有效率問題的原因，這個選擇器中會最先在 CSSOM 的所有葉⼦節點裡查找 p 標籤，這種標籤類的選擇器會很多且沒有索引，會造成查找效率低下。不建議使⽤標簽選擇器和通配選擇器的原因也是這個。
+2、兄弟選擇器為什麼只能向後尋找兄弟元素。這是因為在⽣成渲染樹的時候會 traversal DOM 節點來⽣成渲染樹的節點，當遇到兄弟選擇器的時候，它前⾯的兄弟元素在渲染樹上的節點已經⽣成完畢，⽽它後⾯的兄弟節點還沒有⽣成。這時候如果再回頭去改前⾯兄弟節點的那就⿇煩了，整個 traversal 的規則都要變化，⽽後⾯兄弟節點在⽣成的時候把兄弟選擇器的影響加進去就可以。
+所以這就是為什麼兄弟選擇器只能向後尋找兄弟元素，⽽沒提供向前尋找的⽅式。
 
-[Link](url) and ![Image](src)
-```
 
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
 
-### Jekyll Themes
+### 佈局（Layout）
+經過上⾯的步驟，⽣成了⼀棵渲染樹，這棵樹就是我們展⽰頁⾯的關鍵。通過計算渲染樹上每個節點的樣式，就能得出來每個元素所佔空間的⼤⼩和位置。當有了所有元素的⼤⼩和位置後，就可以在瀏覽器的頁⾯區域裡去繪制元素的邊框了。這個過程就是佈局  Layout。
 
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/JohnKeng/johnkeng.github.io/settings). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
+### 繪制（Paint）
+經過佈局，每個元素的位置和⼤⼩就有了，經過最後繪制這⼀步，就可以把樣式可視化的展現在屏幕上了。在繪制的過程中，瀏覽器會調⽤圖形處理器，逐層逐塊的把所有計算好位置和樣式的元素都繪制出來展⽰在瀏覽器上。
 
-### Support or Contact
+### 重排（Reflow）與重繪（Repaint）
+最後還要講兩個概念，重排（Reflow）與重繪（Repaint）。
+渲染樹是動態構建的，DOM 節點和 CSS 節點的改動都可能會造成渲染樹的重建。
+渲染樹的改動就會造成重排或者重繪，下⾯我們來介紹這兩個概念，以及它們都是在什麼情況下會被觸發。
 
-Having trouble with Pages? Check out our [documentation](https://help.github.com/categories/github-pages-basics/) or [contact support](https://github.com/contact) and we’ll help you sort it out.
+1、重排。
+當我們在 DOM 樹中新增、刪除了元素，或者是改變了某些元素的⼤⼩、位置、佈局⽅式等，在這個時候渲染樹裡這個有改動的節點和它會影響的節點，都要重新計算。在改動發⽣時，要重新經歷DOM 的改動、 CSSOM 樹的構建、渲染樹的構建、佈局和繪制整個流程，這個過程就叫做「重排」，也有的叫做「回流」。
+以最常通過 JS 操作的 「display:none;」-> 「display:block;」來說，要讓元素顯⽰會經歷下⾯的過程：
+- DOM 樹沒有變化。
+- CSSOM 樹中這個樣式節點裡的 display 屬性值變成 block。
+- 渲染樹中的變化就比較⼤了，因為之前 「display:none;」 的元素沒有出現在渲染樹中，所以這個時候渲染樹就要再重新結合 DOM 樹和 CSSOM 樹，把這個元素和其所有⼦元素都加到渲染樹中來。
+- 佈局的過程也會有不⼩的開銷，需要給新加進來的元素找到位置，然後再把後⾯影響到的所有元素的⼤⼩和位置都重新計算⼀遍。這樣得到⼀個新的佈局值。
+- 最後就是按著新的佈局，把該元素和受它影響的相關元素都重新繪制⼀遍。
+- 這時頁⾯的改動就⽣效了。
+
+
+
+2、重繪
+重繪是當我們改變元素的字體顏⾊、背景⾊等外觀元素的時候，並不會改變它的⼤⼩和位置，也不會影響到其他元素的佈局，這個時候就沒有必要再重新構建渲染樹了。瀏覽器會直接對元素的樣式重新繪制，這個過程就叫做「重繪」。
+假如我們想對 .content 元素加⼀個 「color: red;」 的樣式。這個時候就會經歷以下的過程：
+
+- DOM 樹沒有變化。
+- CSSOM 樹中 .content 對應的節點加入⼀條 「color: red;」 的樣式。
+- Color 屬性的改變不會造成渲染樹結構的變化，所以會在現有的渲染樹中找出 .content 元素，給它加上 「color: red;」 的樣式。
+- 因為存在樣式繼承機制，所以瀏覽器還會找到 .content 元素的⼦元素，如果有可以繼承的節點，那麼也要給這些節點加上 「color: red;」 的樣式。
+- 不涉及位置變動，佈局過程直接忽略。
+- 對 .content 元素及其⼦元素佔⽤的塊重新繪制。
+
+這就是重排和重繪的概念，相對來說重排操作的消耗會比較⼤，所以在操作中盡量少的造成頁⾯的重排。
+
+
+> Tips:
+為了減少重排，可以通過幾種⽅式優化：
+1、不要逐項的更改樣式，可以把需要改動的樣式收集到⼀塊，⽤⼀次操作改變。
+2、可以使⽤ class 的變動代替樣式的改變，也能達到第1條的效果。
+3、不要循環操作 DOM，循環的結果也要緩存起來，最後⽤⼀次操作來完成。
+4、需要頻繁改動的元素（比如動畫）盡量使⽤絕對定位，脫離 normal flow 的元素會減少對後⾯元素的影響。
+5、在條件允許的情況下盡量使⽤ CSS3 動畫，它可以調⽤ GPU 執⾏渲染。
+
+
+
+
+
+
+
+
+
+
+
+
+
